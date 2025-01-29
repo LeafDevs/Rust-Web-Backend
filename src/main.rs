@@ -1,7 +1,10 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use structures::AuthRequest;
+use dotenv::dotenv;
 #[path = "utils/enums.rs"] mod enums;
 #[path = "utils/structures.rs"] mod structures;
+#[path = "utils/database.rs"] mod database;
+#[path = "utils/encrypt.rs"] mod enc;
 
 #[get("/")]
 async fn hello() -> impl Responder {
@@ -25,7 +28,8 @@ async fn auth(req_body: String) -> impl Responder {
 
     match a {
         Ok(parsed_request) => {
-            HttpResponse::Ok().body(format!("Received username: {}, password: {}", parsed_request.email, parsed_request.password))
+            let success = database::check_account(&parsed_request.email, &parsed_request.password).unwrap_or(false);
+            HttpResponse::Ok().body(format!(r#"{{"success": {}}}"#, success))
         }
         Err(_e) => {
             HttpResponse::BadRequest().body("Invalid JSON Format")
@@ -35,6 +39,14 @@ async fn auth(req_body: String) -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+    let _ = init_database();
+    let _ = database::create_account("email", "passowrd", "name name");
+    let hash = enc::hash_password("test_PasswoRd123@@#");
+    println!("test_PasswoRd123@@#");
+    println!("{}", hash);
+    println!("Created Database");
+    // let _ = database::create_posting("Retail Cashier", "Work as a cashier while also working the queue", "123", "123", "123", "1234", "jobtype", "location", "none");
     HttpServer::new(|| {
         App::new()
             .service(hello)
@@ -50,10 +62,38 @@ async fn main() -> std::io::Result<()> {
 
 // Setup Database Connection
 
-fn initDatabase() -> rusqlite::Result<()> {
-    let conn = rusqlite::Connection::open_in_memory()?;
-    
+fn init_database() -> rusqlite::Result<()> {
+    let conn = rusqlite::Connection::open("fbla.db")?;
 
+    conn.execute(
+        "create table if not exists accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name VARCHAR(255) NULL,
+            last_name VARCHAR(255) NULL,
+            email VARCHAR(255) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            password VARCHAR(255) NOT NULL,
+            profile TEXT NULL DEFAULT '{\"pfp\": \"https://github.com/leafdevs.png\", \"role\": \"Student\"}' )",
+        [],
+    )?;
+
+    conn.execute(
+        "create table if not exists postings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            tags TEXT NOT NULL,
+            documents TEXT NOT NULL,
+            tips TEXT NOT NULL,
+            skills TEXT NOT NULL,
+            experience TEXT NOT NULL,
+            jobtype TEXT NOT NULL,
+            location TEXT NOT NULL,
+            date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )?;
     Ok(())
 }
 
