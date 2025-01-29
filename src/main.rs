@@ -104,6 +104,12 @@ fn init_database() -> rusqlite::Result<()> {
     - Fix any vulnerabilities I find
     - Add an Encryption Method (Probs a Symmetric Encryption with rotating public keys)
     - Utils class to handle password Hashing (Argon2)
+    
+
+
+    - Stuff I did today:
+    - password hashing and database work.
+    - nothing else.
 
 
 
