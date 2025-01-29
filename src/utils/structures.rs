@@ -4,7 +4,6 @@ use serde::{Serialize, Deserialize};
 use enums::AccountType;
 use enums::ExperienceLevel;
 use enums::JobType;
-use enums::AuthType;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProfileInfo {

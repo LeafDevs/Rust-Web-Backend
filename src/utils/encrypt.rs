@@ -1,6 +1,5 @@
 use std::{env};
-use argonautica::{Hasher, Verifier};
-use rusqlite::{params, Connection};
+use argonautica::Hasher;
 
 pub fn hash_password(password: &str) -> String {
     let hash_secret = env::var("HASH_SECRET").unwrap(); // Unwrap for simplicity (no error handling)
