@@ -1,10 +1,12 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
-use structures::AuthRequest;
 use dotenv::dotenv;
-#[path = "utils/enums.rs"] mod enums;
-#[path = "utils/structures.rs"] mod structures;
-#[path = "utils/database.rs"] mod database;
+use actix_cors::Cors;
+use actix_web::http;
+
+#[path = "data/new_user.rs"] mod users;
 #[path = "utils/encrypt.rs"] mod enc;
+
+#[path = "utils/routes/accounts.rs"] mod account_routes;
 
 #[get("/")]
 async fn hello() -> impl Responder {
@@ -20,38 +22,28 @@ async fn manual_hello() -> impl Responder {
     HttpResponse::Ok().body("Hey there!")
 }
 
-#[post("/api/v1/auth")]
-async fn auth(req_body: String) -> impl Responder {
-    let a: Result<AuthRequest, serde_json::Error> = serde_json::from_str(&req_body);
-
-    println!("Recieved Body {req_body}");
-
-    match a {
-        Ok(parsed_request) => {
-            let success = database::check_account(&parsed_request.email, &parsed_request.password).unwrap_or(false);
-            HttpResponse::Ok().body(format!(r#"{{"success": {}}}"#, success))
-        }
-        Err(_e) => {
-            HttpResponse::BadRequest().body("Invalid JSON Format")
-        }
-    }
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let _ = init_database();
-    let _ = database::create_account("email", "passowrd", "name name");
-    let hash = enc::hash_password("test_PasswoRd123@@#");
-    println!("test_PasswoRd123@@#");
-    println!("{}", hash);
-    println!("Created Database");
-    // let _ = database::create_posting("Retail Cashier", "Work as a cashier while also working the queue", "123", "123", "123", "1234", "jobtype", "location", "none");
-    HttpServer::new(|| {
+    println!("Started RESTful API on \nPublic: https://api.leafdevs.xyz/ \nPrivate: http://127.0.0.1:8080/ ");
+    HttpServer::new(move || {
         App::new()
+            .wrap(
+                Cors::default()
+                    .allowed_origin("http://localhost:5173")
+                    .allowed_methods(vec!["GET", "POST", "OPTIONS", "DELETE"])
+                    .allowed_headers(vec![
+                        actix_web::http::header::AUTHORIZATION,
+                        actix_web::http::header::ACCEPT,
+                        actix_web::http::header::CONTENT_TYPE
+                    ])
+                    .max_age(3600),
+            )
             .service(hello)
             .service(echo)
-            .service(auth)
+            .service(account_routes::login_account)
+            .service(account_routes::register_account)
             .route("/hey", web::get().to(manual_hello))
     })
     .bind(("127.0.0.1", 8080))?
@@ -71,6 +63,7 @@ fn init_database() -> rusqlite::Result<()> {
             first_name VARCHAR(255) NULL,
             last_name VARCHAR(255) NULL,
             email VARCHAR(255) NOT NULL,
+            unique_id VARCHAR(255) NOT NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             password VARCHAR(255) NOT NULL,
