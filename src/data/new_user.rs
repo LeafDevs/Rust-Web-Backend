@@ -58,6 +58,25 @@ impl NewUser {
         Ok(())
     }
 
+    pub fn get_by_uuid(uuid: &str) -> rusqlite::Result<NewUser> {
+        let conn = rusqlite::Connection::open("fbla.db")?;
+        let mut stmt = conn.prepare("SELECT email, password, unique_id, profile, first_name, last_name FROM accounts WHERE unique_id = ?1")?;
+        
+        stmt.query_row(rusqlite::params![uuid], |row| {
+            Ok(NewUser {
+                email: row.get(0)?,
+                password: row.get(1)?,
+                unique_id: row.get(2)?,
+                profile: serde_json::from_str(&row.get::<_, String>(3)?).map_err(|e| {
+                    println!("[ERROR] Failed to parse profile JSON: {}", e);
+                    rusqlite::Error::InvalidQuery
+                })?,
+                first_name: row.get(4)?,
+                last_name: row.get(5)?,
+            })
+        })
+    }
+
     pub fn get_by_email(email: &str) -> rusqlite::Result<Option<NewUser>> {
         println!("[LOG] Attempting to open database connection");
         let conn = rusqlite::Connection::open("fbla.db")?;

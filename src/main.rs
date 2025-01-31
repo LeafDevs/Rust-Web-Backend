@@ -42,6 +42,7 @@ async fn main() -> std::io::Result<()> {
             )
             .service(hello)
             .service(echo)
+            .service(account_routes::get_user)
             .service(account_routes::login_account)
             .service(account_routes::register_account)
             .route("/hey", web::get().to(manual_hello))

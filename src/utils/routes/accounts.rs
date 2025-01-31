@@ -11,6 +11,38 @@ pub struct RegisterRequest {
     last_name: String,
 }
 
+#[get("/api/v1/user")]
+pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
+    // Get bearer token from Authorization header
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or(""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Missing Authorization header"
+        }))
+    };
+
+    // Extract UUID from bearer token
+    let uuid = auth_header.replace("Bearer ", "");
+
+    // Get user from database using UUID
+    match users::NewUser::get_by_uuid(&uuid) {
+        Ok(user) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "email": user.email,
+            "password": user.password,
+            "unique_id": user.unique_id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "profile": user.profile
+        })),
+        Err(e) => HttpResponse::NotFound().json(serde_json::json!({
+            "success": false,
+            "error": format!("User not found: {}", e)
+        }))
+    }
+}
+
 #[post("/api/v1/register")]
 pub async fn register_account(req_body: String) -> impl Responder {
     println!("{req_body}");
