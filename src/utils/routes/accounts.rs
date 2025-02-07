@@ -9,6 +9,7 @@ pub struct RegisterRequest {
     password: String,
     first_name: String,
     last_name: String,
+    account_type: String // "student" or "employer"
 }
 
 #[get("/api/v1/user")]
@@ -30,11 +31,37 @@ pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
         Ok(user) => HttpResponse::Ok().json(serde_json::json!({
             "success": true,
             "email": user.email,
-            "password": user.password,
             "unique_id": user.unique_id,
             "first_name": user.first_name,
             "last_name": user.last_name,
-            "profile": user.profile
+            "profile": user.profile,
+            "account_type": user.account_type,
+            "forms": {
+                "student": {
+                    "resume": false,
+                    "transcript": false,
+                    "agreement": false,
+                    "background_check": false
+                },
+                "employer": {
+                    "employer_agreement": false,
+                    "job_posting_guidelines": false,
+                    "insurance_certificate": false,
+                    "benefits_description": false
+                }
+            },
+            "tasks": {
+                "student": [
+                    "Complete profile",
+                    "Upload resume",
+                    "Submit required forms"
+                ],
+                "employer": [
+                    "Complete company profile", 
+                    "Submit required documentation",
+                    "Post job opportunities"
+                ]
+            }
         })),
         Err(e) => HttpResponse::NotFound().json(serde_json::json!({
             "success": false,
@@ -48,7 +75,13 @@ pub async fn register_account(req_body: String) -> impl Responder {
     println!("{req_body}");
     let register_request: RegisterRequest = serde_json::from_str(&req_body).unwrap();
     // Create a new user
-    let new_user = users::NewUser::new(register_request.email, register_request.password, register_request.first_name, register_request.last_name);
+    let new_user = users::NewUser::new(
+        register_request.email,
+        register_request.password,
+        register_request.first_name,
+        register_request.last_name,
+        register_request.account_type.clone()
+    );
     // Dump the new user
     if let Err(e) = users::NewUser::dump(&new_user) {
         return HttpResponse::Ok().json(serde_json::json!({
@@ -60,7 +93,8 @@ pub async fn register_account(req_body: String) -> impl Responder {
     let uuid = new_user.unique_id;
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
-        "uuid": uuid
+        "uuid": uuid,
+        "account_type": register_request.account_type
     }))
 }
 
@@ -111,7 +145,8 @@ pub async fn login_account(req_body: String) -> impl Responder {
                 println!("[LOG] Password verification successful for user: {}", user.unique_id);
                 return HttpResponse::Ok().json(serde_json::json!({
                     "success": true,
-                    "uuid": user.unique_id
+                    "uuid": user.unique_id,
+                    "account_type": user.account_type
                 }));
             },
             Ok(false) => {
