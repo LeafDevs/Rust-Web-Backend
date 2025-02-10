@@ -12,6 +12,14 @@ pub struct RegisterRequest {
     account_type: String // "student" or "employer"
 }
 
+#[derive(Deserialize)]
+pub struct UpdateEmployerAgreementsRequest {
+    employer_agreement: bool,
+    job_posting_guidelines: bool,
+    insurance_certificate: bool,
+    benefits_description: bool
+}
+
 #[get("/api/v1/user")]
 pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
     // Get bearer token from Authorization header
@@ -35,7 +43,6 @@ pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
             "first_name": user.first_name,
             "last_name": user.last_name,
             "profile": user.profile,
-            "account_type": user.account_type,
             "forms": {
                 "student": {
                     "resume": false,
@@ -72,30 +79,37 @@ pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
 
 #[post("/api/v1/register")]
 pub async fn register_account(req_body: String) -> impl Responder {
-    println!("{req_body}");
-    let register_request: RegisterRequest = serde_json::from_str(&req_body).unwrap();
-    // Create a new user
-    let new_user = users::NewUser::new(
-        register_request.email,
-        register_request.password,
-        register_request.first_name,
-        register_request.last_name,
-        register_request.account_type.clone()
-    );
-    // Dump the new user
-    if let Err(e) = users::NewUser::dump(&new_user) {
-        return HttpResponse::Ok().json(serde_json::json!({
-            "success": false,
-            "error": format!("Failed to create user: {}", e)
-        }));
+    match serde_json::from_str::<RegisterRequest>(&req_body) {
+        Ok(register_request) => {
+            let new_user = users::NewUser::new(
+                register_request.email,
+                register_request.password,
+                register_request.first_name,
+                register_request.last_name,
+                register_request.account_type.clone()
+            );
+            // Dump the new user
+            if let Err(e) = users::NewUser::dump(&new_user) {
+                return HttpResponse::Ok().json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to create user: {}", e)
+                }));
+            }
+            // Get the user's uuid
+            let uuid = new_user.unique_id;
+            HttpResponse::Ok().json(serde_json::json!({
+                "success": true,
+                "uuid": uuid,
+                "account_type": register_request.account_type
+            }))
+        },
+        Err(e) => {
+            HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": format!("Invalid request format: {}", e)
+            }))
+        }
     }
-    // Get the user's uuid
-    let uuid = new_user.unique_id;
-    HttpResponse::Ok().json(serde_json::json!({
-        "success": true,
-        "uuid": uuid,
-        "account_type": register_request.account_type
-    }))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -165,4 +179,92 @@ pub async fn login_account(req_body: String) -> impl Responder {
         "success": false,
         "error": "Invalid email or password"
     }))
+}
+
+#[post("/api/v1/employer/agreements")]
+pub async fn update_employer_agreements(
+    req: actix_web::HttpRequest,
+    agreements: web::Json<UpdateEmployerAgreementsRequest>
+) -> impl Responder {
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Missing authorization header"
+        }))
+    };
+
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    };
+
+    // Verify user is an employer
+    let account_type: String = match conn.query_row(
+        "SELECT account_type FROM accounts WHERE unique_id = ?1",
+        [&auth_header],
+        |row| row.get(0)
+    ) {
+        Ok(t) => t,
+        Err(_) => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Invalid authorization token"
+        }))
+    };
+
+    if account_type != "employer" {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "success": false,
+            "error": "Only employers can update employer agreements"
+        }));
+    }
+
+    // Get current profile data
+    let current_profile: String = match conn.query_row(
+        "SELECT profile FROM accounts WHERE unique_id = ?1",
+        [&auth_header],
+        |row| row.get(0)
+    ) {
+        Ok(p) => p,
+        Err(_) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": "Failed to fetch current profile"
+        }))
+    };
+
+    // Parse current profile
+    let mut profile: serde_json::Value = match serde_json::from_str(&current_profile) {
+        Ok(p) => p,
+        Err(_) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": "Failed to parse profile data"
+        }))
+    };
+
+    // Update all agreement fields while preserving other data
+    if let Some(forms) = profile.get_mut("forms") {
+        if let Some(employer) = forms.get_mut("employer") {
+            employer["employer_agreement"] = serde_json::json!(agreements.employer_agreement);
+            employer["job_posting_guidelines"] = serde_json::json!(agreements.job_posting_guidelines);
+            employer["insurance_certificate"] = serde_json::json!(agreements.insurance_certificate);
+            employer["benefits_description"] = serde_json::json!(agreements.benefits_description);
+        }
+    }
+
+    match conn.execute(
+        "UPDATE accounts SET profile = ?1 WHERE unique_id = ?2",
+        [&profile.to_string(), &auth_header]
+    ) {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "Employer agreements updated successfully"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to update agreements: {}", e)
+        }))
+    }
 }

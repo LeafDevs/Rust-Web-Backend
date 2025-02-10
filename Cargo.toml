@@ -17,6 +17,7 @@ sha2 = "0.10.6"
 dotenv = "0.15.0"
 actix-cors = "0.7.0"
 http = "1.0.0"
+chrono = "0.4.39"
 
 
 [dependencies.uuid]

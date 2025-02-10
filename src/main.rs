@@ -5,8 +5,12 @@ use actix_web::http;
 
 #[path = "data/new_user.rs"] mod users;
 #[path = "utils/encrypt.rs"] mod enc;
+#[path = "data/posts.rs"] mod posts;
 
 #[path = "utils/routes/accounts.rs"] mod account_routes;
+#[path = "utils/routes/posts.rs"] mod post_routes;
+
+#[path = "utils/routes/applications.rs"] mod application_routes;
 
 #[get("/")]
 async fn hello() -> impl Responder {
@@ -32,7 +36,10 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 Cors::default()
                     .allowed_origin("http://localhost:5173")
-                    .allowed_methods(vec!["GET", "POST", "OPTIONS", "DELETE"])
+                    .allowed_origin("http://127.0.0.1:5173")
+                    .allowed_origin("https://jobs.leafdevs.xyz")
+                    .allowed_origin("https://api.leafdevs.xyz")
+                    .allowed_methods(vec!["GET", "POST", "OPTIONS", "DELETE", "PUT"])
                     .allowed_headers(vec![
                         actix_web::http::header::AUTHORIZATION,
                         actix_web::http::header::ACCEPT,
@@ -45,6 +52,13 @@ async fn main() -> std::io::Result<()> {
             .service(account_routes::get_user)
             .service(account_routes::login_account)
             .service(account_routes::register_account)
+            .service(post_routes::get_posts)
+            .service(post_routes::create_post)
+            .service(application_routes::create_application)
+            .service(application_routes::get_received_applications)
+            .service(application_routes::get_submitted_applications)
+            .service(application_routes::update_application_status)
+            .service(account_routes::update_employer_agreements)
             .route("/hey", web::get().to(manual_hello))
     })
     .bind(("127.0.0.1", 8080))?
@@ -59,21 +73,26 @@ fn init_database() -> rusqlite::Result<()> {
     let conn = rusqlite::Connection::open("fbla.db")?;
 
     conn.execute(
-        "create table if not exists accounts (
+        "CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            first_name VARCHAR(255) NULL,
-            last_name VARCHAR(255) NULL,
-            email VARCHAR(255) NOT NULL,
-            unique_id VARCHAR(255) NOT NULL,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            email VARCHAR(255) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
-            profile TEXT NULL DEFAULT '{\"pfp\": \"https://github.com/leafdevs.png\", \"role\": \"Student\"}' )",
+            unique_id VARCHAR(255) NOT NULL UNIQUE,
+            first_name VARCHAR(255) NOT NULL,
+            last_name VARCHAR(255) NOT NULL,
+            account_type VARCHAR(50) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_login DATETIME,
+            status VARCHAR(50) NOT NULL DEFAULT 'active',
+            profile TEXT NOT NULL,
+            CONSTRAINT email_unique UNIQUE (email),
+            CONSTRAINT uuid_unique UNIQUE (unique_id)
+        )",
         [],
     )?;
 
     conn.execute(
-        "create table if not exists postings (
+        "CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             description TEXT NOT NULL,
@@ -84,7 +103,28 @@ fn init_database() -> rusqlite::Result<()> {
             experience TEXT NOT NULL,
             jobtype TEXT NOT NULL,
             location TEXT NOT NULL,
-            date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            date TEXT NOT NULL,
+            questions TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            employer_id TEXT NOT NULL,
+            FOREIGN KEY (employer_id) REFERENCES accounts (unique_id)
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            applicant_id TEXT NOT NULL,
+            employer_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            answers TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (post_id) REFERENCES posts (id),
+            FOREIGN KEY (applicant_id) REFERENCES accounts (unique_id),
+            FOREIGN KEY (employer_id) REFERENCES accounts (unique_id)
         )",
         [],
     )?;
