@@ -1,5 +1,5 @@
 const authRequest = async () => {
-    const response = await fetch("http://127.0.0.1:8080/api/v1/auth", {
+    const response = await fetch("http://172.20.10.8:8080/api/v1/auth", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"

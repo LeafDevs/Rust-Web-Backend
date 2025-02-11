@@ -1,4 +1,5 @@
-use actix_web::{post, get, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Responder};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use crate::posts::Post;
 
@@ -46,6 +47,7 @@ pub async fn create_post(req: HttpRequest, req_body: web::Json<CreatePostRequest
         Err(_) => return HttpResponse::Unauthorized().json(serde_json::json!({
             "success": false,
             "error": "Invalid authorization token"
+
         }))
     };
 
@@ -160,7 +162,6 @@ pub async fn get_posts() -> impl Responder {
             "date": row.get::<_, String>("date")?,
             "questions": row.get::<_, String>("questions")?,
             "company_name": row.get::<_, String>("company_name")?,
-            "employer_id": row.get::<_, String>("employer_id")?
         }))
     });
 
@@ -181,6 +182,240 @@ pub async fn get_posts() -> impl Responder {
         Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
             "success": false,
             "error": format!("Failed to fetch posts: {}", e)
+        }))
+    }
+}
+
+#[get("/api/v1/my_posts")]
+pub async fn get_my_posts(req: HttpRequest) -> impl Responder {
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Missing authorization header"
+        }))
+    };
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database connection failed: {}", e)
+        }))
+    };
+
+    let mut stmt = match conn.prepare("SELECT * FROM posts WHERE employer_id = ?") {
+        Ok(stmt) => stmt,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false, 
+            "error": format!("Failed to prepare statement: {}", e)
+        }))
+    };
+
+    let posts = stmt.query_map([&auth_header], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>("id")?,
+            "title": row.get::<_, String>("title")?,
+            "description": row.get::<_, String>("description")?,
+            "tags": row.get::<_, String>("tags")?,
+            "documents": row.get::<_, String>("documents")?,
+            "tips": row.get::<_, String>("tips")?,
+            "skills": row.get::<_, String>("skills")?,
+            "experience": row.get::<_, String>("experience")?,
+            "jobtype": row.get::<_, String>("jobtype")?,
+            "location": row.get::<_, String>("location")?,
+            "date": row.get::<_, String>("date")?,
+            "questions": row.get::<_, String>("questions")?,
+            "company_name": row.get::<_, String>("company_name")?
+        }))
+    });
+
+    match posts {
+        Ok(posts) => {
+            let posts: Result<Vec<_>, _> = posts.collect();
+            match posts {
+                Ok(posts) => HttpResponse::Ok().json(serde_json::json!({
+                    "success": true,
+                    "posts": posts
+                })),
+                Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to process posts: {}", e)
+                }))
+            }
+        },
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to fetch posts: {}", e)
+        }))
+    }
+    
+}
+
+#[delete("/api/v1/posts/{id}")]
+pub async fn delete_post(req: HttpRequest) -> impl Responder {
+    let id = req.match_info().get("id").unwrap();
+    println!("Attempting to delete post with ID: {}", id);
+
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => {
+            println!("Delete post failed: No authorization header provided");
+            return HttpResponse::Unauthorized().json(serde_json::json!({
+                "success": false,
+                "error": "No authorization header provided"
+            }))
+        }
+    };
+
+    let conn = match Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => {
+            println!("Delete post failed: Database connection error: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "error": format!("Database connection error: {}", e)
+            }))
+        }
+    };
+
+    // First verify the post belongs to this employer
+    let post_owner = match conn.query_row(
+        "SELECT employer_id FROM posts WHERE id = ?",
+        [id],
+        |row| row.get::<_, String>(0)
+    ) {
+        Ok(employer_id) => employer_id,
+        Err(e) => {
+            println!("Delete post failed: Could not verify post ownership: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false, 
+                "error": format!("Failed to verify post ownership: {}", e)
+            }))
+        }
+    };
+
+    if post_owner != auth_header {
+        println!("Delete post failed: Unauthorized attempt to delete post {} by user {}", id, auth_header);
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "success": false,
+            "error": "You do not have permission to delete this post"
+        }));
+    }
+
+    // First delete any related records in child tables
+    match conn.execute("DELETE FROM applications WHERE post_id = ?", [id]) {
+        Ok(_) => (),
+        Err(e) => {
+            println!("Delete post failed: Could not delete related applications: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to delete related applications: {}", e)
+            }))
+        }
+    }
+
+    // Then delete the post
+    match conn.execute("DELETE FROM posts WHERE id = ?", [id]) {
+        Ok(_) => {
+            println!("Successfully deleted post with ID: {}", id);
+            HttpResponse::Ok().json(serde_json::json!({
+                "success": true,
+                "message": format!("Post with ID {} deleted successfully", id)
+            }))
+        },
+        Err(e) => {
+            println!("Delete post failed: Database error while deleting post {}: {}", id, e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to delete post: {}", e)
+            }))
+        }
+    }
+}
+
+#[put("/api/v1/posts/{id}")]
+pub async fn update_post(req: HttpRequest, body: web::Json<Post>) -> impl Responder {
+    let id = match req.match_info().get("id") {
+        Some(id) => id,
+        None => return HttpResponse::BadRequest().json(serde_json::json!({
+            "success": false,
+            "error": "Missing post ID"
+        }))
+    };
+
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "No authorization header provided"
+        }))
+    };
+
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database connection failed: {}", e)
+        }))
+    };
+
+    // Verify post ownership
+    let post_owner: String = match conn.query_row(
+        "SELECT employer_id FROM posts WHERE id = ?",
+        [id],
+        |row| row.get(0)
+    ) {
+        Ok(owner) => owner,
+        Err(e) => return HttpResponse::NotFound().json(serde_json::json!({
+            "success": false,
+            "error": format!("Post not found: {}", e)
+        }))
+    };
+
+    if post_owner != auth_header {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "success": false,
+            "error": "You do not have permission to update this post"
+        }));
+    }
+
+    let post = body.into_inner();
+    match conn.execute(
+        "UPDATE posts SET 
+            title = ?,
+            description = ?,
+            tags = ?,
+            documents = ?,
+            tips = ?,
+            skills = ?,
+            experience = ?,
+            jobtype = ?,
+            location = ?,
+            date = ?,
+            questions = ?
+        WHERE id = ?",
+        rusqlite::params![
+            post.title,
+            post.description,
+            serde_json::to_string(&post.tags).unwrap(),
+            post.documents,
+            serde_json::to_string(&post.tips).unwrap(),
+            serde_json::to_string(&post.skills).unwrap(),
+            post.experience,
+            post.jobtype,
+            post.location,
+            post.date,
+            serde_json::to_string(&post.questions).unwrap(),
+            id
+        ],
+    ) {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "Post updated successfully"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to update post: {}", e)
         }))
     }
 }

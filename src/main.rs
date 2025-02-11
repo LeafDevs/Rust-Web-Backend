@@ -30,7 +30,7 @@ async fn manual_hello() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let _ = init_database();
-    println!("Started RESTful API on \nPublic: https://api.leafdevs.xyz/ \nPrivate: http://127.0.0.1:8080/ ");
+    println!("Started RESTful API on \nPublic: https://api.leafdevs.xyz/ \nPrivate: http://172.20.10.8:8080/ ");
     HttpServer::new(move || {
         App::new()
             .wrap(
@@ -39,6 +39,7 @@ async fn main() -> std::io::Result<()> {
                     .allowed_origin("http://127.0.0.1:5173")
                     .allowed_origin("https://jobs.leafdevs.xyz")
                     .allowed_origin("https://api.leafdevs.xyz")
+                    .allowed_origin("http://172.20.10.8:5173")
                     .allowed_methods(vec!["GET", "POST", "OPTIONS", "DELETE", "PUT"])
                     .allowed_headers(vec![
                         actix_web::http::header::AUTHORIZATION,
@@ -59,9 +60,12 @@ async fn main() -> std::io::Result<()> {
             .service(application_routes::get_submitted_applications)
             .service(application_routes::update_application_status)
             .service(account_routes::update_employer_agreements)
+            .service(post_routes::get_my_posts)
+            .service(post_routes::delete_post)
+            .service(post_routes::update_post)
             .route("/hey", web::get().to(manual_hello))
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("172.20.10.8", 8080))?
     .run()
     .await
 }
