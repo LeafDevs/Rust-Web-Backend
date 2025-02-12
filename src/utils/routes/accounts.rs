@@ -9,7 +9,7 @@ pub struct RegisterRequest {
     password: String,
     first_name: String,
     last_name: String,
-    account_type: String // "student" or "employer"
+    account_type: String
 }
 
 #[derive(Deserialize)]
@@ -20,9 +20,64 @@ pub struct UpdateEmployerAgreementsRequest {
     benefits_description: bool
 }
 
+#[get("/api/v1/total_users")]
+pub async fn get_total_users() -> impl Responder {
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    };
+
+    let total: i64 = match conn.query_row(
+        "SELECT COUNT(*) FROM accounts",
+        [],
+        |row| row.get(0)
+    ) {
+        Ok(count) => count,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to count users: {}", e)
+        }))
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "total_users": total
+    }))
+}
+
+#[get("/api/v1/total_employers")]
+pub async fn get_total_employers() -> impl Responder {
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    };
+
+    let total: i64 = match conn.query_row(
+        "SELECT COUNT(*) FROM accounts WHERE account_type = 'employer'",
+        [],
+        |row| row.get(0)
+    ) {
+        Ok(count) => count,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to count employers: {}", e)
+        }))
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "total_employers": total
+    }))
+}
+
 #[get("/api/v1/user")]
 pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
-    // Get bearer token from Authorization header
     let auth_header = match req.headers().get("Authorization") {
         Some(header) => header.to_str().unwrap_or(""),
         None => return HttpResponse::Unauthorized().json(serde_json::json!({
@@ -31,10 +86,8 @@ pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
         }))
     };
 
-    // Extract UUID from bearer token
     let uuid = auth_header.replace("Bearer ", "");
 
-    // Get user from database using UUID
     match users::NewUser::get_by_uuid(&uuid) {
         Ok(user) => HttpResponse::Ok().json(serde_json::json!({
             "success": true,
@@ -64,7 +117,7 @@ pub async fn get_user(req: actix_web::HttpRequest) -> impl Responder {
                     "Submit required forms"
                 ],
                 "employer": [
-                    "Complete company profile", 
+                    "Complete company profile",
                     "Submit required documentation",
                     "Post job opportunities"
                 ]
@@ -88,14 +141,12 @@ pub async fn register_account(req_body: String) -> impl Responder {
                 register_request.last_name,
                 register_request.account_type.clone()
             );
-            // Dump the new user
             if let Err(e) = users::NewUser::dump(&new_user) {
                 return HttpResponse::Ok().json(serde_json::json!({
                     "success": false,
                     "error": format!("Failed to create user: {}", e)
                 }));
             }
-            // Get the user's uuid
             let uuid = new_user.unique_id;
             HttpResponse::Ok().json(serde_json::json!({
                 "success": true,
@@ -120,7 +171,6 @@ pub struct LoginRequest {
 
 #[post("/api/v1/auth")]
 pub async fn login_account(req_body: String) -> impl Responder {
-    // Log incoming request
     println!("[LOG] Login request received: {}", req_body);
 
     let login_request: LoginRequest = match serde_json::from_str(&req_body) {
@@ -134,9 +184,8 @@ pub async fn login_account(req_body: String) -> impl Responder {
         }
     };
 
-    // Log attempt to find user
     println!("[LOG] Attempting to find user with email: {}", login_request.email);
-    
+
     let user = match users::NewUser::get_by_email(&login_request.email) {
         Ok(user) => {
             println!("[LOG] User query successful");
@@ -151,7 +200,6 @@ pub async fn login_account(req_body: String) -> impl Responder {
         }
     };
 
-    // Verify the password
     if let Some(user) = user {
         println!("[LOG] User found, verifying password...");
         match crate::enc::verify_password(&login_request.password, &user.password) {
@@ -202,7 +250,6 @@ pub async fn update_employer_agreements(
         }))
     };
 
-    // Verify user is an employer
     let account_type: String = match conn.query_row(
         "SELECT account_type FROM accounts WHERE unique_id = ?1",
         [&auth_header],
@@ -222,7 +269,6 @@ pub async fn update_employer_agreements(
         }));
     }
 
-    // Get current profile data
     let current_profile: String = match conn.query_row(
         "SELECT profile FROM accounts WHERE unique_id = ?1",
         [&auth_header],
@@ -235,7 +281,6 @@ pub async fn update_employer_agreements(
         }))
     };
 
-    // Parse current profile
     let mut profile: serde_json::Value = match serde_json::from_str(&current_profile) {
         Ok(p) => p,
         Err(_) => return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -244,7 +289,6 @@ pub async fn update_employer_agreements(
         }))
     };
 
-    // Update all agreement fields while preserving other data
     if let Some(forms) = profile.get_mut("forms") {
         if let Some(employer) = forms.get_mut("employer") {
             employer["employer_agreement"] = serde_json::json!(agreements.employer_agreement);
@@ -267,4 +311,56 @@ pub async fn update_employer_agreements(
             "error": format!("Failed to update agreements: {}", e)
         }))
     }
+}
+
+#[get("/api/v1/users")]
+pub async fn get_all_users_without_private_information_leaked() -> impl Responder {
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    };
+
+    let mut stmt = match conn.prepare(
+        "SELECT unique_id, first_name, last_name, profile, account_type FROM accounts"
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to prepare statement: {}", e)
+        }))
+    };
+
+    let users_iter = stmt.query_map([], |row| {
+        let profile_str: String = row.get(3)?;
+        let profile: serde_json::Value = serde_json::from_str(&profile_str).unwrap_or_default();
+
+        // Extract profile picture from the profile JSON
+        let profile_picture = profile.get("pfp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "first_name": row.get::<_, String>(1)?,
+            "last_name": row.get::<_, String>(2)?,
+            "pfp": profile_picture,
+            "account_type": row.get::<_, String>(4)?
+        }))
+    });
+
+    let users: Vec<serde_json::Value> = match users_iter {
+        Ok(iter) => iter.filter_map(Result::ok).collect(),
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to fetch users: {}", e)
+        }))
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "users": users
+    }))
 }
