@@ -98,8 +98,8 @@ pub async fn create_post(req: HttpRequest, req_body: web::Json<CreatePostRequest
     }
 
     match conn.execute(
-        "INSERT INTO posts (title, description, tags, documents, tips, skills, experience, jobtype, location, date, questions, company_name, employer_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO posts (title, description, tags, documents, tips, skills, experience, jobtype, location, date, questions, company_name, employer_id, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             req_body.title,
             req_body.description,
@@ -111,9 +111,10 @@ pub async fn create_post(req: HttpRequest, req_body: web::Json<CreatePostRequest
             req_body.jobtype,
             req_body.location,
             req_body.date,
-            req_body.questions,
+            req_body.questions, 
             req_body.company_name,
-            auth_header
+            auth_header,
+            "Pending"
         ],
     ) {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({
@@ -138,7 +139,7 @@ pub async fn get_posts() -> impl Responder {
     };
 
     let mut stmt = match conn.prepare(
-        "SELECT * FROM posts ORDER BY date DESC"
+        "SELECT * FROM posts WHERE status = 'Accepted' ORDER BY date DESC"
     ) {
         Ok(stmt) => stmt,
         Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -185,6 +186,98 @@ pub async fn get_posts() -> impl Responder {
         }))
     }
 }
+
+#[get("/api/v1/pending_posts")]
+pub async fn get_pending_posts(req: HttpRequest) -> impl Responder {
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Missing authorization header"
+        }))
+    };
+
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database connection failed: {}", e)
+        }))
+    };
+
+    // Verify user is admin
+    let is_admin: bool = match conn.query_row(
+        "SELECT account_type FROM accounts WHERE unique_id = ?",
+        [&auth_header],
+        |row| {
+            let account_type: String = row.get(0)?;
+            Ok(account_type == "administrator")
+        }
+    ) {
+        Ok(is_admin) => is_admin,
+        Err(_) => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Unauthorized access"
+        }))
+    };
+
+    if !is_admin {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "success": false,
+            "error": "Only administrators can view pending posts"
+        }));
+    }
+
+    let mut stmt = match conn.prepare(
+        "SELECT * FROM posts WHERE status = 'Pending' ORDER BY date DESC"
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    };
+
+    let posts = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>("id")?,
+            "title": row.get::<_, String>("title")?,
+            "description": row.get::<_, String>("description")?,
+            "tags": row.get::<_, String>("tags")?,
+            "documents": row.get::<_, String>("documents")?,
+            "tips": row.get::<_, String>("tips")?,
+            "skills": row.get::<_, String>("skills")?,
+            "experience": row.get::<_, String>("experience")?,
+            "jobtype": row.get::<_, String>("jobtype")?,
+            "location": row.get::<_, String>("location")?,
+            "date": row.get::<_, String>("date")?,
+            "questions": row.get::<_, String>("questions")?,
+            "company_name": row.get::<_, String>("company_name")?,
+            "employer_id": row.get::<_, String>("employer_id")?
+        }))
+    });
+
+    match posts {
+        Ok(posts) => {
+            let posts: Result<Vec<_>, _> = posts.collect();
+            match posts {
+                Ok(posts) => HttpResponse::Ok().json(serde_json::json!({
+                    "success": true,
+                    "posts": posts
+                })),
+                Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Failed to process posts: {}", e)
+                }))
+            }
+        },
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to fetch posts: {}", e)
+        }))
+    }
+}
+
 
 #[get("/api/v1/my_posts")]
 pub async fn get_my_posts(req: HttpRequest) -> impl Responder {

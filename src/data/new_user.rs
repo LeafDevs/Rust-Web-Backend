@@ -208,7 +208,7 @@ impl NewUser {
 
     pub fn get_by_uuid(uuid: &str) -> rusqlite::Result<NewUser> {
         let conn = rusqlite::Connection::open("fbla.db")?;
-        let mut stmt = conn.prepare("SELECT email, password, unique_id, profile, first_name, last_name, account_type FROM accounts WHERE unique_id = ?1")?;
+        let mut stmt = conn.prepare_cached("SELECT email, password, unique_id, profile, first_name, last_name, account_type FROM accounts WHERE unique_id = ?1")?;
         
         stmt.query_row(rusqlite::params![uuid], |row| {
             Ok(NewUser {

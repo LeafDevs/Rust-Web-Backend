@@ -1,2 +1,4 @@
 /target
 fbla.db
+.env
+/src/uploads/*

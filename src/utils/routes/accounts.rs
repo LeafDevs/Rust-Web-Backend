@@ -324,7 +324,7 @@ pub async fn get_all_users_without_private_information_leaked() -> impl Responde
     };
 
     let mut stmt = match conn.prepare(
-        "SELECT unique_id, first_name, last_name, profile, account_type FROM accounts"
+        "SELECT id, first_name, last_name, profile, account_type FROM accounts"
     ) {
         Ok(stmt) => stmt,
         Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -343,7 +343,7 @@ pub async fn get_all_users_without_private_information_leaked() -> impl Responde
             .unwrap_or("");
 
         Ok(serde_json::json!({
-            "id": row.get::<_, String>(0)?,
+            "id": row.get::<_, i64>(0)?,
             "first_name": row.get::<_, String>(1)?,
             "last_name": row.get::<_, String>(2)?,
             "pfp": profile_picture,

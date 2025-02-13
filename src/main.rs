@@ -7,8 +7,10 @@ use actix_web::http;
 #[path = "utils/encrypt.rs"] mod enc;
 #[path = "data/posts.rs"] mod posts;
 
+#[path = "utils/routes/messages.rs"] mod message_routes;
 #[path = "utils/routes/accounts.rs"] mod account_routes;
 #[path = "utils/routes/posts.rs"] mod post_routes;
+#[path = "utils/routes/misc.rs"] mod misc_routes;
 
 #[path = "utils/routes/applications.rs"] mod application_routes;
 
@@ -30,7 +32,7 @@ async fn manual_hello() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let _ = init_database();
-    println!("Started RESTful API on \nPublic: https://api.leafdevs.xyz/ \nPrivate: http://127.0.0.1:8080/ ");
+    println!("Started RESTful API on \nPublic: https://api.leafdevs.xyz/ \nPrivate: http://172.20.10.8:8080/ ");
     HttpServer::new(move || {
         App::new()
             .wrap(
@@ -39,7 +41,7 @@ async fn main() -> std::io::Result<()> {
                     .allowed_origin("http://127.0.0.1:5173")
                     .allowed_origin("https://jobs.leafdevs.xyz")
                     .allowed_origin("https://api.leafdevs.xyz")
-                    .allowed_origin("http://127.0.0.1:5173")
+                    .allowed_origin("http://172.20.10.8:5173")
                     .allowed_methods(vec!["GET", "POST", "OPTIONS", "DELETE", "PUT"])
                     .allowed_headers(vec![
                         actix_web::http::header::AUTHORIZATION,
@@ -50,25 +52,46 @@ async fn main() -> std::io::Result<()> {
             )
             .service(hello)
             .service(echo)
+
+            // Account Routes
             .service(account_routes::get_user)
             .service(account_routes::login_account)
             .service(account_routes::register_account)
-            .service(post_routes::get_posts)
-            .service(post_routes::create_post)
-            .service(application_routes::create_application)
-            .service(application_routes::get_received_applications)
-            .service(application_routes::get_submitted_applications)
-            .service(application_routes::update_application_status)
             .service(account_routes::update_employer_agreements)
             .service(account_routes::get_total_employers)
             .service(account_routes::get_total_users)
             .service(account_routes::get_all_users_without_private_information_leaked)
+            .service(message_routes::get_messages)
+            .service(message_routes::get_conversations)
+            .service(message_routes::send_message)
+
+            // Post Routes
+            .service(post_routes::get_posts)
+            .service(post_routes::create_post)
+            .service(post_routes::get_pending_posts)
+
+            // Application Routes
+            .service(application_routes::create_application)
+            .service(application_routes::get_received_applications)
+            .service(application_routes::get_submitted_applications)
+            .service(application_routes::update_application_status)
+            
+
+            // Misc Routes
+
+            .service(misc_routes::upload)
+            .service(misc_routes::health_check)
+            .service(misc_routes::get_server_time)
+            .service(misc_routes::serve_file)
+
+            // Post Routes
+
             .service(post_routes::get_my_posts)
             .service(post_routes::delete_post)
             .service(post_routes::update_post)
             .route("/hey", web::get().to(manual_hello))
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("172.20.10.8", 8080))?
     .run()
     .await
 }
@@ -80,12 +103,17 @@ fn init_database() -> rusqlite::Result<()> {
     let conn = rusqlite::Connection::open("fbla.db")?;
 
     conn.execute(
-        "CREATE TABLE messages (
+        "CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            message_data TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES accounts(id)
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            read BOOLEAN DEFAULT FALSE,
+            message_type TEXT,
+            file_url TEXT,
+            FOREIGN KEY (sender_id) REFERENCES accounts(id),
+            FOREIGN KEY (receiver_id) REFERENCES accounts(id)
         )",
         [],
     )?;
@@ -125,6 +153,7 @@ fn init_database() -> rusqlite::Result<()> {
             questions TEXT NOT NULL,
             company_name TEXT NOT NULL,
             employer_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('Accepted', 'Pending')),
             FOREIGN KEY (employer_id) REFERENCES accounts (unique_id)
         )",
         [],
