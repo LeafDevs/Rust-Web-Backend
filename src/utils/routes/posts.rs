@@ -187,6 +187,137 @@ pub async fn get_posts() -> impl Responder {
     }
 }
 
+#[put("/api/v1/posts/{id}/accept")]
+pub async fn accept_post(req: HttpRequest) -> impl Responder {
+    let id = req.match_info().get("id").unwrap();
+    println!("Attempting to accept post with ID: {}", id);
+
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Missing authorization header"
+        }))
+    };
+
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database connection failed: {}", e)
+        }))
+    };
+
+    // Verify user is admin
+    let is_admin: bool = match conn.query_row(
+        "SELECT account_type FROM accounts WHERE unique_id = ?",
+        [&auth_header],
+        |row| {
+            let account_type: String = row.get(0)?;
+            Ok(account_type == "administrator")
+        }
+    ) {
+        Ok(is_admin) => is_admin,
+        Err(_) => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Unauthorized access"
+        }))
+    };
+
+    if !is_admin {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "success": false,
+            "error": "Only administrators can accept/reject posts"
+        }));
+    }
+
+    match conn.execute(
+        "UPDATE posts SET status = 'Accepted' WHERE id = ?",
+        [id]
+    ) {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    }
+}
+
+#[put("/api/v1/posts/{id}/reject")]
+pub async fn reject_post(req: HttpRequest) -> impl Responder {
+    let id = req.match_info().get("id").unwrap();
+    println!("Attempting to reject post with ID: {}", id);
+
+    let auth_header = match req.headers().get("Authorization") {
+        Some(header) => header.to_str().unwrap_or("").replace("Bearer ", ""),
+        None => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Missing authorization header"
+        }))
+    };
+
+    let conn = match rusqlite::Connection::open("fbla.db") {
+        Ok(conn) => conn,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database connection failed: {}", e)
+        }))
+    };
+
+    // Verify user is admin
+    let is_admin: bool = match conn.query_row(
+        "SELECT account_type FROM accounts WHERE unique_id = ?",
+        [&auth_header],
+        |row| {
+            let account_type: String = row.get(0)?;
+            Ok(account_type == "administrator")
+        }
+    ) {
+        Ok(is_admin) => is_admin,
+        Err(_) => return HttpResponse::Unauthorized().json(serde_json::json!({
+            "success": false,
+            "error": "Unauthorized access"
+        }))
+    };
+
+    if !is_admin {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "success": false,
+            "error": "Only administrators can reject posts"
+        }));
+    }
+
+    let result = match req.headers().get("action") {
+        Some(action) if action.to_str().unwrap_or("") == "reject" => {
+            conn.execute(
+                "UPDATE posts SET status = 'Rejected' WHERE id = ?",
+                [id]
+            )
+        },
+
+        _ => {
+            conn.execute(
+                "DELETE FROM posts WHERE id = ?",
+                [id]
+            )
+        }
+    };
+
+    match result {
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "success": false,
+            "error": format!("Database error: {}", e)
+        }))
+    }
+}   
+
+
+
 #[get("/api/v1/pending_posts")]
 pub async fn get_pending_posts(req: HttpRequest) -> impl Responder {
     let auth_header = match req.headers().get("Authorization") {
@@ -371,28 +502,47 @@ pub async fn delete_post(req: HttpRequest) -> impl Responder {
         }
     };
 
-    // First verify the post belongs to this employer
-    let post_owner = match conn.query_row(
-        "SELECT employer_id FROM posts WHERE id = ?",
-        [id],
-        |row| row.get::<_, String>(0)
+    // Check if user is admin
+    let account_type: String = match conn.query_row(
+        "SELECT account_type FROM accounts WHERE unique_id = ?1",
+        [&auth_header],
+        |row| row.get(0)
     ) {
-        Ok(employer_id) => employer_id,
+        Ok(t) => t,
         Err(e) => {
-            println!("Delete post failed: Could not verify post ownership: {}", e);
+            println!("Delete post failed: Could not verify account type: {}", e);
             return HttpResponse::InternalServerError().json(serde_json::json!({
-                "success": false, 
-                "error": format!("Failed to verify post ownership: {}", e)
+                "success": false,
+                "error": format!("Failed to verify account type: {}", e)
             }))
         }
     };
 
-    if post_owner != auth_header {
-        println!("Delete post failed: Unauthorized attempt to delete post {} by user {}", id, auth_header);
-        return HttpResponse::Forbidden().json(serde_json::json!({
-            "success": false,
-            "error": "You do not have permission to delete this post"
-        }));
+    // Only verify ownership if not admin
+    if account_type != "administrator" {
+        // Verify the post belongs to this employer
+        let post_owner = match conn.query_row(
+            "SELECT employer_id FROM posts WHERE id = ?",
+            [id],
+            |row| row.get::<_, String>(0)
+        ) {
+            Ok(employer_id) => employer_id,
+            Err(e) => {
+                println!("Delete post failed: Could not verify post ownership: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "success": false, 
+                    "error": format!("Failed to verify post ownership: {}", e)
+                }))
+            }
+        };
+
+        if post_owner != auth_header {
+            println!("Delete post failed: Unauthorized attempt to delete post {} by user {}", id, auth_header);
+            return HttpResponse::Forbidden().json(serde_json::json!({
+                "success": false,
+                "error": "You do not have permission to delete this post"
+            }));
+        }
     }
 
     // First delete any related records in child tables

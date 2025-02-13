@@ -68,7 +68,12 @@ async fn main() -> std::io::Result<()> {
             // Post Routes
             .service(post_routes::get_posts)
             .service(post_routes::create_post)
+            .service(post_routes::accept_post)
+            .service(post_routes::reject_post)
             .service(post_routes::get_pending_posts)
+            .service(post_routes::get_my_posts)
+            .service(post_routes::delete_post)
+            .service(post_routes::update_post)
 
             // Application Routes
             .service(application_routes::create_application)
@@ -86,9 +91,6 @@ async fn main() -> std::io::Result<()> {
 
             // Post Routes
 
-            .service(post_routes::get_my_posts)
-            .service(post_routes::delete_post)
-            .service(post_routes::update_post)
             .route("/hey", web::get().to(manual_hello))
     })
     .bind(("172.20.10.8", 8080))?
@@ -153,7 +155,7 @@ fn init_database() -> rusqlite::Result<()> {
             questions TEXT NOT NULL,
             company_name TEXT NOT NULL,
             employer_id TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('Accepted', 'Pending')),
+            status TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Accepted', 'Pending')),
             FOREIGN KEY (employer_id) REFERENCES accounts (unique_id)
         )",
         [],
@@ -180,21 +182,14 @@ fn init_database() -> rusqlite::Result<()> {
 
 /*
     TODO
-    - Recreate the Backend Routes for the api
-    - Add SQLite Support
+    ✓ Recreate the Backend Routes for the api
+    ✓ Add SQLite Support
     - Fix any vulnerabilities I find
-    - Add an Encryption Method (Probs a Symmetric Encryption with rotating public keys)
-    - Utils class to handle password Hashing (Argon2)
-    
-
-
-    - Stuff I did today:
-    - password hashing and database work.
-    - nothing else.
-
-
-
-    - Database Tables
-
+    ✓ Add an Encryption Method (Probs a Symmetric Encryption with rotating public keys)
+    ✓ Utils class to handle password Hashing (Argon2)
+    ✓ Add a method to handle the file uploads
+    ✓ Messaging Feature
+    ✓ Application Feature
+    ✓ Admin Related Features
 
 */
