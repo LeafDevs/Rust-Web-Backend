@@ -99,7 +99,7 @@ async fn upload(mut payload: Multipart) -> Result<HttpResponse, Error> {
     println!("Upload complete. Returning success response.");
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "success": true,
-        "file_url": format!("172.20.10.8:8080/uploads/{}", new_filename)
+        "file_url": format!("127.0.0.1:8080/uploads/{}", new_filename)
     })))
 }
 
